@@ -32,3 +32,4 @@ front_file = [
 # Rack-wise file storage
 f_arr = [[] for _ in range(6)]
 r_arr = [[] for _ in range(6)]
+MAX_POINTS = 360

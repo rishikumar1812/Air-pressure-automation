@@ -1,8 +1,9 @@
-import time
-from log_cleaning import process_and_plot
+import sys
+from PyQt5.QtWidgets import QApplication
+from ui import Dashboard
 
-LOG_DIR = "YOUR_LOG_FOLDER_PATH"
-
-while True:
-    process_and_plot(LOG_DIR)
-    time.sleep(240)
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    win = Dashboard()
+    win.show()
+    sys.exit(app.exec_())

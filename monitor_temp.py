@@ -1,16 +1,19 @@
-import numpy as np
+def read_file(file):
 
-def read_temp_complete_avg(start, end):
+    start, end = None, None
+
+    with open(file, "r") as f:
+        for line in f:
+            line = line.strip()
+
+            if line.startswith("START TEMP"):
+                start = int(line.split(":")[1].strip())
+
+            elif line.startswith("END TEMP"):
+                end = int(line.split(":")[1].strip())
+
+    return start, end
+
+
+def calculate_avg(start, end):
     return (start + end) // 2
-
-
-def read_start_temp(df):
-    return df["Start Temp"].astype(int).values
-
-
-def read_end_temp(df):
-    return df["End Temp"].astype(int).values
-
-
-def update_time(df):
-    return df["Update Time"].values[-1]
