@@ -77,25 +77,11 @@ class Dashboard(QWidget):
         for ax in axs.flat:
             ax.clear()
 
-        for arr in fs:
-            if arr:
-                axs[0][0].plot(arr)
-        axs[0][0].set_title("Front Start")
+        temp_graph(axs[0][0], fs, "Front Start")
 
-        for arr in rs:
-            if arr:
-                axs[0][1].plot(arr)
-        axs[0][1].set_title("Rear Start")
-
-        for arr in fe:
-            if arr:
-                axs[1][0].plot(arr)
-        axs[1][0].set_title("Front End")
-
-        for arr in re:
-            if arr:
-                axs[1][1].plot(arr)
-        axs[1][1].set_title("Rear End")
+        temp_graph(axs[0][1], rs, "Rear  Start")
+        temp_graph(axs[1][0], fe, "Front End")
+        temp_graph(axs[1][1], re, "Rear End")
 
         self.canvas.draw()
 
