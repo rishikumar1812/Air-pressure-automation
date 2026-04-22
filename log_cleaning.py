@@ -1,105 +1,160 @@
 import os
+import config
+import pandas as pd
 from datetime import datetime
 
-import config
-from cache import save_cache, load_cache, trim
-from monitor_temp import read_file, calculate_avg
+from monitor_temp import read_start_temp, read_end_temp
 
 
-def is_valid(file):
+def is_12_pm(file):
     return datetime.fromtimestamp(os.path.getmtime(file)).hour >= 12
 
 
-def process_data():
+def read_latest_dfile(files):
 
-    cache = load_cache()
+    model_name = []
+    start_temp = []
+    end_temp = []
+    update_time = []
 
-    if cache:
-        front_start = cache["front_start"]
-        front_end = cache["front_end"]
-        rear_start = cache["rear_start"]
-        rear_end = cache["rear_end"]
-    else:
-        front_start = [[] for _ in range(6)]
-        front_end = [[] for _ in range(6)]
-        rear_start = [[] for _ in range(6)]
-        rear_end = [[] for _ in range(6)]
+    for file in files:
+        with open(file, "r") as f:
+            for line in f:
+                line = line.strip()
+
+                if line.startswith("MODEL"):
+                    model_name.append(line.split(":")[1].strip())
+
+                elif line.startswith("START TEMP"):
+                    start_temp.append(int(line.split(":")[1].strip()))
+
+                elif line.startswith("END TEMP"):
+                    end_temp.append(int(line.split(":")[1].strip()))
+
+                elif line.startswith("UPDATE TIME"):
+                    update_time.append(line.split(":")[1].strip())
+
+    if not model_name:
+        return None
+
+    return pd.DataFrame({
+        "modelname": model_name,
+        "Start Temp": start_temp,
+        "End Temp": end_temp,
+        "Update Time": update_time
+    })
+
+
+def read_latest_array_file(file_array):
+    if not file_array:
+        return None
+
+    file_array = sorted(file_array, key=os.path.getmtime)
+    return read_latest_dfile(file_array)
+
+
+def read_latest_start_array_file(file_arr, data_points=20):
+
+    arrays = []
+
+    for arr in file_arr:
+        df = read_latest_array_file(arr)
+
+        if df is not None:
+            x = read_start_temp(df)
+
+            if len(x) > data_points:
+                x = x[-data_points:]
+
+            arrays.append(x)
+        else:
+            arrays.append([])
+
+    return arrays
+
+
+def read_latest_end_array_file(file_arr, data_points=20):
+
+    arrays = []
+
+    for arr in file_arr:
+        df = read_latest_array_file(arr)
+
+        if df is not None:
+            x = read_end_temp(df)
+
+            if len(x) > data_points:
+                x = x[-data_points:]
+
+            arrays.append(x)
+        else:
+            arrays.append([])
+
+    return arrays
+
+
+def processlog(directory):
+
+    front_rack = []
+    rear_rack = []
+
+    # RESET ARRAYS
+    config.f_arr = [[] for _ in range(6)]
+    config.r_arr = [[] for _ in range(6)]
 
     files = [
-        os.path.join(config.LOG_DIR, f)
-        for f in os.listdir(config.LOG_DIR)
+        os.path.join(directory, f)
+        for f in os.listdir(directory)
         if f.endswith(".csv")
     ]
 
-    f_arr = [[] for _ in range(6)]
-    r_arr = [[] for _ in range(6)]
-
     for file in files:
 
-        if not is_valid(file):
-            continue
-
         key = os.path.basename(file)[-7:-4]
-        idx = int(os.path.basename(file)[-6:-4]) - 1
+        key1 = os.path.basename(file)[-5:-4]
 
         if key in config.front_file:
-            f_arr[idx].append(file)
 
-        elif key in config.rear_file:
-            r_arr[idx].append(file)
+            if is_12_pm(file):
 
-    # PROCESS
-    for i in range(6):
+                front_rack.append(file)
 
-        # FRONT
-        if f_arr[i]:
-            latest = max(f_arr[i], key=os.path.getmtime)
+                if key1 in ['1']:
+                    config.f_arr[0].append(file)
+                elif key1 in ['2']:
+                    config.f_arr[1].append(file)
+                elif key1 in ['3']:
+                    config.f_arr[2].append(file)
+                elif key1 in ['4']:
+                    config.f_arr[3].append(file)
+                elif key1 in ['5']:
+                    config.f_arr[4].append(file)
+                elif key1 in ['6']:
+                    config.f_arr[5].append(file)
 
-            if config.LAST_FILES.get(f"f{i}") != latest:
-                s, e = read_file(latest)
+        elif key in config.wear_file:
 
-                if s is not None:
-                    front_start[i].append(s)
-                    front_end[i].append(e)
-                    config.LAST_FILES[f"f{i}"] = latest
+            if is_12_pm(file):
 
-        # REAR
-        if r_arr[i]:
-            latest = max(r_arr[i], key=os.path.getmtime)
+                rear_rack.append(file)
 
-            if config.LAST_FILES.get(f"r{i}") != latest:
-                s, e = read_file(latest)
+                if key1 in ['1']:
+                    config.r_arr[0].append(file)
+                elif key1 in ['2']:
+                    config.r_arr[1].append(file)
+                elif key1 in ['3']:
+                    config.r_arr[2].append(file)
+                elif key1 in ['4']:
+                    config.r_arr[3].append(file)
+                elif key1 in ['5']:
+                    config.r_arr[4].append(file)
+                elif key1 in ['6']:
+                    config.r_arr[5].append(file)
 
-                if s is not None:
-                    rear_start[i].append(s)
-                    rear_end[i].append(e)
-                    config.LAST_FILES[f"r{i}"] = latest
+    front_start = read_latest_start_array_file(config.f_arr)
+    front_end = read_latest_end_array_file(config.f_arr)
 
-    # TRIM
-    for i in range(6):
-        front_start[i] = trim(front_start[i], config.MAX_POINTS)
-        front_end[i] = trim(front_end[i], config.MAX_POINTS)
-        rear_start[i] = trim(rear_start[i], config.MAX_POINTS)
-        rear_end[i] = trim(rear_end[i], config.MAX_POINTS)
+    rear_start = read_latest_start_array_file(config.r_arr)
+    rear_end = read_latest_end_array_file(config.r_arr)
 
-    save_cache({
-        "front_start": front_start,
-        "front_end": front_end,
-        "rear_start": rear_start,
-        "rear_end": rear_end
-    })
-
-    # AVG
-    front_avg = [
-        calculate_avg(front_start[i][-1], front_end[i][-1])
-        if front_start[i] else 0
-        for i in range(6)
-    ]
-
-    rear_avg = [
-        calculate_avg(rear_start[i][-1], rear_end[i][-1])
-        if rear_start[i] else 0
-        for i in range(6)
-    ]
-
-    return front_start, front_end, rear_start, rear_end, front_avg, rear_avg
+    return front_start, front_end, rear_start, rear_end
