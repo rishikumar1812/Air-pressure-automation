@@ -1,0 +1,114 @@
+EXE BUILD STEPS FOR TEMPERATURE DASHBOARD (PYQT)
+
+---
+
+STEP 1: INSTALL PYINSTALLER
+
+Open terminal / command prompt and run:
+
+pip install pyinstaller
+
+---
+
+STEP 2: GO TO PROJECT FOLDER
+
+cd path\to\your\project
+
+Example:
+cd C:\Users\Rishi\Desktop\project
+
+---
+
+STEP 3: CHECK PROJECT RUNS
+
+Run:
+
+python main.py
+
+Make sure:
+
+- UI opens
+- Graphs are visible
+- No errors
+
+---
+
+STEP 4: FIX LOG DIRECTORY (IMPORTANT)
+
+In your code, replace:
+
+LOG_DIR = "C:/DGS/log"
+
+With:
+
+import os
+LOG_DIR = os.path.join(os.getcwd(), "log")
+
+Then create a folder:
+
+project/
+main.py
+log/
+(your csv files)
+
+---
+
+STEP 5: BUILD EXE
+
+Run:
+
+pyinstaller --onefile --windowed main.py
+
+---
+
+STEP 6: IF GRAPH NOT SHOWING
+
+Run instead:
+
+pyinstaller --onefile --windowed --hidden-import matplotlib main.py
+
+---
+
+STEP 7: FIND EXE FILE
+
+Go to:
+
+dist/
+
+You will see:
+
+main.exe
+
+---
+
+STEP 8: TEST EXE
+
+Double click:
+
+main.exe
+
+Check:
+
+- UI opens
+- Graph updates
+- No crash
+
+---
+
+STEP 9: SHARE TO OTHER LAPTOP
+
+Send:
+
+main.exe
+log/ folder
+
+OR zip both
+
+---
+
+FINAL RESULT
+
+You now have a standalone Windows application
+No Python installation required on other systems
+
+---
