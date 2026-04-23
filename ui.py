@@ -59,31 +59,38 @@ class Dashboard(QWidget):
         main_layout = QVBoxLayout()
 
         # ───────── TOP BAR ─────────
-        top = QHBoxLayout()
+        
+top = QHBoxLayout()
 
-        self.com = QComboBox()
-        self.com.addItems(["COM1", "COM2", "COM3"])
-        self.com.setStyleSheet("""
-            background-color:#1E293B;
-            padding:6px;
-            border-radius:6px;
-        """)
+left_part = QHBoxLayout()
+left_part.addWidget(QLabel("COM Port:"))
+left_part.addWidget(self.com)
 
-        admin = QPushButton("Admin Login")
-        admin.setStyleSheet("""
-            background-color:#22C55E;
-            padding:8px;
-            border-radius:6px;
-            color:white;
-        """)
+right_part = QVBoxLayout()
 
-        top.addWidget(QLabel("COM Port:"))
-        top.addWidget(self.com)
-        top.addStretch()
-        top.addWidget(admin)
+admin = QPushButton("Admin")
+admin.setStyleSheet("""
+    background-color:#22C55E;
+    padding:8px;
+    border-radius:6px;
+    color:white;
+""")
 
-        main_layout.addLayout(top)
+self.update_label = QLabel("Last Update: --")
+self.update_label.setStyleSheet("""
+    font-size:12px;
+    color:#94A3B8;
+""")
 
+right_part.addWidget(admin)
+right_part.addWidget(self.update_label)
+
+top.addLayout(left_part)
+top.addStretch()
+top.addLayout(right_part)
+
+main_layout.addLayout(top)
+        
         # ───────── GRAPH AREA ─────────
         self.canvas = Canvas()
         main_layout.addWidget(self.canvas)
