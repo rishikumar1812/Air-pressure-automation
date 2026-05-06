@@ -1,150 +1,218 @@
 import sys
 import os
-from datetime import datetime
-
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QGridLayout,
     QDialog, QLineEdit, QMessageBox,
-    QFileDialog, QSlider
+    QSlider, QFileDialog
 )
 
-from PyQt5.QtCore import (
-    Qt,
-    QTimer,
-    QFileSystemWatcher
-)
-
+from PyQt5.QtCore import Qt, QTimer
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+import numpy as np
 
-from log_cleaning import processlog
-
-
-# ─────────────────────────────
-# DEFAULT LOG DIRECTORY
-# ─────────────────────────────
-LOG_DIR = r"C:\DGS\Logs"
-
-# ─────────────────────────────
-# GRAPH SETTINGS
-# ─────────────────────────────
-WINDOW = 50
+import config
+from log_cleaning import process_data
 
 
-# ─────────────────────────────
+# =========================================================
 # GRAPH FUNCTION
-# ─────────────────────────────
-def temp_graph(ax, arrays, title, colors, bg_color):
+# =========================================================
 
-    for i, arr in enumerate(arrays):
+def temp_graph(ax, arrays, title):
 
-        if arr:
-            data = arr[-WINDOW:]
+    colors = plt.cm.tab10.colors
 
-            ax.plot(
-                data,
-                color=colors[i % len(colors)],
-                linewidth=2
+    if not arrays or (len(arrays) == 1 and not arrays[0]):
+
+        ax.text(
+            0.5,
+            0.5,
+            "No Data Available",
+            ha='center',
+            va='center',
+            fontsize=14,
+            color="white"
+        )
+
+        ax.set_title(title, color="white")
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        return
+
+    all_x = [np.arange(len(arr)) for arr in arrays if len(arr) > 0]
+
+    min_x = min([x.min() for x in all_x] if all_x else [0])
+    max_x = max([x.max() for x in all_x] if all_x else [0])
+
+    aligned_arrays = []
+
+    for arr in arrays:
+
+        if len(arr) > 0:
+
+            x = np.arange(len(arr))
+
+            y = np.full(max_x - min_x + 1, np.nan)
+
+            y[x - min_x] = arr
+
+            aligned_arrays.append(y)
+
+        else:
+
+            aligned_arrays.append(
+                np.full(max_x - min_x + 1, np.nan)
             )
 
-    ax.set_title(title, color='white')
-    ax.set_facecolor(bg_color)
+    for i, arr in enumerate(aligned_arrays):
+
+        if np.isfinite(arr).any():
+
+            x = np.arange(min_x, max_x + 1)
+
+            ax.plot(
+                x,
+                arr,
+                linewidth=2,
+                color=colors[i % len(colors)],
+                label=f"DL{i+1}"
+            )
+
+    ax.set_title(title, color="white", fontsize=13)
+
+    ax.set_xlabel("Time Index", color="white")
+    ax.set_ylabel("Temperature °C", color="white")
 
     ax.tick_params(colors='white')
 
-    for spine in ax.spines.values():
-        spine.set_edgecolor('#334155')
-        spine.set_linewidth(1.5)
+    ax.grid(True, alpha=0.3)
+
+    ax.legend()
+
+    ax.set_facecolor("#111827")
 
 
-# ─────────────────────────────
-# CANVAS
-# ─────────────────────────────
+# =========================================================
+# MATPLOTLIB CANVAS
+# =========================================================
+
 class Canvas(FigureCanvas):
 
     def __init__(self):
 
-        self.fig = Figure(figsize=(10, 6))
+        self.fig = Figure(figsize=(12, 7))
+        self.fig.patch.set_facecolor("#0F172A")
+
         self.axs = self.fig.subplots(2, 2)
 
         super().__init__(self.fig)
 
+        self.fig.subplots_adjust(
+            hspace=0.35,
+            wspace=0.25,
+            top=0.92,
+            bottom=0.08
+        )
 
-# ─────────────────────────────
-# LOGIN DIALOG
-# ─────────────────────────────
-class LoginDialog(QDialog):
 
-    def __init__(self):
+# =========================================================
+# LOGIN WINDOW
+# =========================================================
 
-        super().__init__()
+class LoginWindow(QDialog):
+
+    def __init__(self, parent=None):
+
+        super().__init__(parent)
 
         self.setWindowTitle("Admin Authentication")
-        self.setFixedSize(350, 220)
+
+        self.setFixedSize(380, 280)
 
         self.setStyleSheet("""
+
             QWidget{
                 background-color:#0F172A;
                 color:white;
-                font-size:14px;
+                font-family:Arial;
             }
 
             QLineEdit{
                 background:#1E293B;
-                border:1px solid #334155;
-                padding:8px;
-                border-radius:6px;
+                border:2px solid #334155;
+                border-radius:10px;
+                padding:12px;
+                font-size:14px;
                 color:white;
             }
 
             QPushButton{
-                background:#22C55E;
-                padding:10px;
-                border-radius:6px;
-                color:white;
+                background:#2563EB;
+                border:none;
+                border-radius:10px;
+                padding:12px;
+                font-size:15px;
                 font-weight:bold;
+                color:white;
             }
+
+            QPushButton:hover{
+                background:#1D4ED8;
+            }
+
         """)
 
         layout = QVBoxLayout()
 
-        title = QLabel("Admin Login")
+        title = QLabel("ADMIN LOGIN")
+
+        title.setAlignment(Qt.AlignCenter)
+
         title.setStyleSheet("""
-            font-size:22px;
+            font-size:24px;
             font-weight:bold;
             color:#38BDF8;
         """)
 
-        self.user_input = QLineEdit()
-        self.user_input.setPlaceholderText("User ID")
+        self.user = QLineEdit()
+        self.user.setPlaceholderText("User ID")
 
-        self.pass_input = QLineEdit()
-        self.pass_input.setPlaceholderText("Password")
-        self.pass_input.setEchoMode(QLineEdit.Password)
+        self.password = QLineEdit()
+        self.password.setPlaceholderText("Password")
+        self.password.setEchoMode(QLineEdit.Password)
 
-        login_btn = QPushButton("Login")
+        login_btn = QPushButton("LOGIN")
+
         login_btn.clicked.connect(self.check_login)
 
+        layout.addStretch()
+
         layout.addWidget(title)
-        layout.addSpacing(10)
-        layout.addWidget(self.user_input)
-        layout.addWidget(self.pass_input)
-        layout.addSpacing(10)
+
+        layout.addSpacing(20)
+
+        layout.addWidget(self.user)
+        layout.addWidget(self.password)
+
+        layout.addSpacing(15)
+
         layout.addWidget(login_btn)
+
+        layout.addStretch()
 
         self.setLayout(layout)
 
-    # ─────────────────────────────
-    # CHECK LOGIN
-    # ─────────────────────────────
     def check_login(self):
 
-        username = self.user_input.text()
-        password = self.pass_input.text()
+        user_id = self.user.text()
+        password = self.password.text()
 
-        # CHANGE USERNAME/PASSWORD HERE
-        if username == "admin" and password == "1234":
+        # CHANGE THIS
+        if user_id == "admin" and password == "1234":
 
             self.accept()
 
@@ -153,182 +221,237 @@ class LoginDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "Access Denied",
-                "Invalid Username or Password"
+                "Wrong User ID or Password"
             )
 
             self.reject()
 
 
-# ─────────────────────────────
+# =========================================================
 # ADMIN PANEL
-# ─────────────────────────────
-class AdminPanel(QDialog):
+# =========================================================
 
-    def __init__(self, dashboard):
+class AdminPanel(QWidget):
+
+    def __init__(self):
 
         super().__init__()
 
-        self.dashboard = dashboard
+        self.setWindowTitle("Admin Control Panel")
 
-        self.setWindowTitle("Admin Settings")
-        self.setFixedSize(550, 350)
+        self.setGeometry(300, 150, 550, 400)
 
         self.setStyleSheet("""
+
             QWidget{
                 background-color:#0F172A;
                 color:white;
-                font-size:14px;
+                font-family:Arial;
+            }
+
+            QLabel{
+                font-size:15px;
             }
 
             QPushButton{
                 background:#2563EB;
-                padding:10px;
-                border-radius:6px;
-                color:white;
+                border:none;
+                border-radius:10px;
+                padding:12px;
+                font-size:14px;
                 font-weight:bold;
+                color:white;
             }
 
-            QLabel{
-                color:white;
+            QPushButton:hover{
+                background:#1D4ED8;
             }
+
+            QSlider::groove:horizontal{
+                height:8px;
+                background:#334155;
+                border-radius:4px;
+            }
+
+            QSlider::handle:horizontal{
+                background:#38BDF8;
+                width:18px;
+                margin:-5px 0;
+                border-radius:9px;
+            }
+
         """)
 
         layout = QVBoxLayout()
 
-        # ───────── LOG DIRECTORY ─────────
-        title = QLabel("Admin Control Panel")
+        title = QLabel("ADMIN SETTINGS")
+
+        title.setAlignment(Qt.AlignCenter)
 
         title.setStyleSheet("""
-            font-size:22px;
-            font-weight:bold;
+            font-size:24px;
             color:#38BDF8;
+            font-weight:bold;
         """)
 
         layout.addWidget(title)
 
-        layout.addSpacing(20)
-
-        current = QLabel("Current Log Directory:")
-
-        self.path_label = QLabel(self.dashboard.log_dir)
-
-        self.path_label.setStyleSheet("""
-            background:#1E293B;
-            padding:10px;
-            border-radius:6px;
-            color:#4ADE80;
-        """)
-
-        browse_btn = QPushButton("Change Log Directory")
-        browse_btn.clicked.connect(self.change_directory)
-
-        layout.addWidget(current)
-        layout.addWidget(self.path_label)
-        layout.addSpacing(10)
-        layout.addWidget(browse_btn)
-
-        # ───────── VOLTAGE SLIDER ─────────
         layout.addSpacing(30)
 
-        voltage_title = QLabel("Voltage Slider (Future Use)")
+        # =================================================
+        # LOG DIRECTORY
+        # =================================================
 
-        voltage_title.setStyleSheet("""
-            font-size:16px;
-            font-weight:bold;
+        self.log_label = QLabel(
+            f"Current Log Directory:\n\n{config.log_dir}"
+        )
+
+        self.log_label.setStyleSheet("""
+            background:#111827;
+            padding:15px;
+            border-radius:10px;
+            color:#E2E8F0;
         """)
 
-        layout.addWidget(voltage_title)
+        change_btn = QPushButton("Change Log Directory")
 
-        self.slider = QSlider(Qt.Horizontal)
+        change_btn.clicked.connect(self.change_dir)
 
-        self.slider.setMinimum(0)
-        self.slider.setMaximum(500)
+        layout.addWidget(self.log_label)
 
-        self.slider.setValue(self.dashboard.voltage)
+        layout.addSpacing(10)
 
-        self.slider.valueChanged.connect(self.update_voltage)
+        layout.addWidget(change_btn)
 
-        self.voltage_label = QLabel(
-            f"Voltage : {self.slider.value()} V"
-        )
+        layout.addSpacing(40)
+
+        # =================================================
+        # VOLTAGE
+        # =================================================
+
+        self.voltage_label = QLabel("Voltage: 220V")
 
         self.voltage_label.setStyleSheet("""
             font-size:18px;
-            color:#FACC15;
+            color:#38BDF8;
             font-weight:bold;
         """)
 
-        layout.addWidget(self.slider)
+        self.slider = QSlider(Qt.Horizontal)
+
+        self.slider.setMinimum(150)
+        self.slider.setMaximum(300)
+
+        self.slider.setValue(220)
+
+        self.slider.valueChanged.connect(self.update_voltage)
+
         layout.addWidget(self.voltage_label)
+
+        layout.addWidget(self.slider)
+
+        layout.addStretch()
 
         self.setLayout(layout)
 
-    # ─────────────────────────────
-    # CHANGE DIRECTORY
-    # ─────────────────────────────
-    def change_directory(self):
+    def change_dir(self):
 
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Select Log Directory"
+            "Select Log Folder"
         )
 
         if folder:
 
-            self.dashboard.log_dir = folder
+            # Update runtime value
+            config.log_dir = folder
 
-            self.path_label.setText(folder)
+            # SAVE PERMANENTLY
+            with open("config.py", "w") as f:
 
-            self.dashboard.reset_watcher()
+                f.write(f'log_dir = r"{folder}"\n')
+
+            self.log_label.setText(
+                f"Current Log Directory:\n\n{folder}"
+            )
 
             QMessageBox.information(
                 self,
-                "Success",
-                "Log Directory Updated Successfully"
+                "Saved",
+                "Log Directory Saved Permanently"
             )
 
-    # ─────────────────────────────
-    # UPDATE VOLTAGE
-    # ─────────────────────────────
-    def update_voltage(self, value):
+    def update_voltage(self):
 
-        self.dashboard.voltage = value
+        value = self.slider.value()
 
         self.voltage_label.setText(
-            f"Voltage : {value} V"
+            f"Voltage: {value}V"
         )
 
 
-# ─────────────────────────────
-# DASHBOARD
-# ─────────────────────────────
+# =========================================================
+# MAIN DASHBOARD
+# =========================================================
+
 class Dashboard(QWidget):
 
     def __init__(self):
 
         super().__init__()
 
-        self.log_dir = LOG_DIR
-        self.voltage = 220
+        self.setWindowTitle("Machine Temperature Monitor")
 
-        self.setWindowTitle("Temperature Monitor Dashboard")
-
-        self.setGeometry(100, 100, 1350, 850)
+        self.setGeometry(100, 50, 1400, 900)
 
         self.setStyleSheet("""
+
             QWidget{
                 background-color:#0F172A;
                 color:#E2E8F0;
                 font-family:Arial;
             }
+
+            QPushButton{
+                background:#2563EB;
+                border:none;
+                border-radius:10px;
+                padding:10px 18px;
+                font-size:14px;
+                font-weight:bold;
+                color:white;
+            }
+
+            QPushButton:hover{
+                background:#1D4ED8;
+            }
+
+            QComboBox{
+                background:#1E293B;
+                border:1px solid #334155;
+                padding:8px;
+                border-radius:8px;
+                color:white;
+            }
+
         """)
 
         main_layout = QVBoxLayout()
 
-        # ─────────────────────────────
+        # =================================================
         # TOP BAR
-        # ─────────────────────────────
-        top = QHBoxLayout()
+        # =================================================
+
+        top_layout = QHBoxLayout()
+
+        left_layout = QHBoxLayout()
+
+        com_label = QLabel("COM:")
+
+        com_label.setStyleSheet("""
+            font-size:18px;
+            font-weight:bold;
+        """)
 
         self.com = QComboBox()
 
@@ -338,347 +461,193 @@ class Dashboard(QWidget):
             "COM3"
         ])
 
-        self.com.setStyleSheet("""
-            background:#1E293B;
-            padding:6px;
-            border-radius:6px;
-        """)
+        left_layout.addWidget(com_label)
+        left_layout.addWidget(self.com)
 
-        left_part = QHBoxLayout()
+        top_layout.addLayout(left_layout)
 
-        left_part.addWidget(QLabel("COM Port :"))
-        left_part.addWidget(self.com)
+        top_layout.addStretch()
 
-        right_part = QVBoxLayout()
+        # RIGHT PANEL
 
-        # ───────── ADMIN BUTTON ─────────
-        admin = QPushButton("Admin")
+        right_layout = QVBoxLayout()
 
-        admin.setStyleSheet("""
-            background:#22C55E;
-            padding:10px;
-            border-radius:6px;
-            color:white;
-            font-weight:bold;
-        """)
+        self.admin_btn = QPushButton("Admin")
 
-        admin.clicked.connect(self.open_admin)
+        self.admin_btn.clicked.connect(self.open_admin)
 
-        self.update_label = QLabel("Last Update : --")
-        self.date_label = QLabel("Date : --")
+        self.ut = QLabel("Update Time: --")
+        self.dt = QLabel("Data Time: --")
 
-        self.update_label.setStyleSheet("""
-            font-size:12px;
+        self.ut.setStyleSheet("""
             color:#94A3B8;
+            font-size:13px;
         """)
 
-        self.date_label.setStyleSheet("""
-            font-size:12px;
+        self.dt.setStyleSheet("""
             color:#94A3B8;
+            font-size:13px;
         """)
 
-        right_part.addWidget(admin)
-        right_part.addWidget(self.update_label)
-        right_part.addWidget(self.date_label)
+        right_layout.addWidget(self.admin_btn)
+        right_layout.addWidget(self.ut)
+        right_layout.addWidget(self.dt)
 
-        top.addLayout(left_part)
+        top_layout.addLayout(right_layout)
 
-        top.addStretch()
+        main_layout.addLayout(top_layout)
 
-        top.addLayout(right_part)
-
-        main_layout.addLayout(top)
-
-        # ─────────────────────────────
+        # =================================================
         # GRAPH SECTION
-        # ─────────────────────────────
+        # =================================================
+
         self.canvas = Canvas()
 
         main_layout.addWidget(self.canvas)
 
-        # ─────────────────────────────
-        # BOTTOM PANEL
-        # ─────────────────────────────
+        # =================================================
+        # BOTTOM SECTION
+        # =================================================
+
         bottom = QGridLayout()
 
-        self.fs_avg = QLabel("-- °C")
-        self.fe_avg = QLabel("-- °C")
-        self.rs_avg = QLabel("-- °C")
-        self.re_avg = QLabel("-- °C")
+        self.fs_avg = QLabel("Front Start Avg: --")
+        self.fe_avg = QLabel("Front End Avg: --")
+        self.rs_avg = QLabel("Rear Start Avg: --")
+        self.re_avg = QLabel("Rear End Avg: --")
 
-        self.status = QLabel("● RUNNING")
-
-        for lbl in [
+        labels = [
             self.fs_avg,
             self.fe_avg,
             self.rs_avg,
             self.re_avg
-        ]:
+        ]
+
+        for lbl in labels:
 
             lbl.setStyleSheet("""
                 font-size:24px;
-                font-weight:bold;
                 color:#38BDF8;
+                font-weight:bold;
             """)
 
+        self.status = QLabel("● RUNNING")
+
         self.status.setStyleSheet("""
-            font-size:30px;
-            font-weight:bold;
             color:#22C55E;
+            font-size:28px;
+            font-weight:bold;
         """)
 
-        bottom.addWidget(QLabel("FRONT START DL AVG"), 0, 0)
-        bottom.addWidget(QLabel("FRONT END DL AVG"), 0, 1)
-        bottom.addWidget(QLabel("REAR START DL AVG"), 0, 2)
-        bottom.addWidget(QLabel("REAR END DL AVG"), 0, 3)
-        bottom.addWidget(QLabel("STATUS"), 0, 4)
+        bottom.addWidget(self.fs_avg, 0, 0)
+        bottom.addWidget(self.rs_avg, 0, 1)
 
-        bottom.addWidget(self.fs_avg, 1, 0)
-        bottom.addWidget(self.fe_avg, 1, 1)
-        bottom.addWidget(self.rs_avg, 1, 2)
-        bottom.addWidget(self.re_avg, 1, 3)
-        bottom.addWidget(self.status, 1, 4)
+        bottom.addWidget(self.fe_avg, 1, 0)
+        bottom.addWidget(self.re_avg, 1, 1)
+
+        bottom.addWidget(self.status, 2, 1)
 
         main_layout.addLayout(bottom)
 
         self.setLayout(main_layout)
 
-        # ─────────────────────────────
-        # BLINK TIMER
-        # ─────────────────────────────
-        self.blink = False
+        # =================================================
+        # TIMER
+        # =================================================
 
-        self.blink_timer = QTimer()
+        self.timer = QTimer()
 
-        self.blink_timer.timeout.connect(
-            self.blink_status
-        )
+        self.timer.timeout.connect(self.update_ui)
 
-        # ─────────────────────────────
-        # FILE WATCHER
-        # ─────────────────────────────
-        self.watcher = QFileSystemWatcher()
-
-        self.reset_watcher()
-
-        self.watcher.directoryChanged.connect(
-            self.update_ui
-        )
-
-        self.watcher.fileChanged.connect(
-            self.update_ui
-        )
+        self.timer.start(30000)
 
         self.update_ui()
 
-    # ─────────────────────────────
-    # RESET WATCHER
-    # ─────────────────────────────
-    def reset_watcher(self):
+    # =====================================================
+    # OPEN ADMIN PANEL
+    # =====================================================
 
-        try:
-
-            self.watcher.removePaths(
-                self.watcher.files()
-            )
-
-            self.watcher.removePaths(
-                self.watcher.directories()
-            )
-
-        except:
-            pass
-
-        if os.path.exists(self.log_dir):
-
-            self.watcher.addPath(self.log_dir)
-
-            files = [
-                os.path.join(self.log_dir, f)
-                for f in os.listdir(self.log_dir)
-            ]
-
-            if files:
-                self.watcher.addPaths(files)
-
-    # ─────────────────────────────
-    # ADMIN ACCESS
-    # ─────────────────────────────
     def open_admin(self):
 
-        login = LoginDialog()
+        login = LoginWindow(self)
 
-        result = login.exec_()
+        if login.exec_() == QDialog.Accepted:
 
-        if result == QDialog.Accepted:
+            self.admin_panel = AdminPanel()
 
-            admin_panel = AdminPanel(self)
+            self.admin_panel.show()
 
-            admin_panel.exec_()
-
-    # ─────────────────────────────
-    # BLINKING STATUS
-    # ─────────────────────────────
-    def blink_status(self):
-
-        if self.blink:
-
-            self.status.setStyleSheet("""
-                color:#EF4444;
-                font-size:30px;
-                font-weight:bold;
-            """)
-
-        else:
-
-            self.status.setStyleSheet("""
-                color:white;
-                font-size:30px;
-                font-weight:bold;
-            """)
-
-        self.blink = not self.blink
-
-    # ─────────────────────────────
+    # =====================================================
     # UPDATE UI
-    # ─────────────────────────────
+    # =====================================================
+
     def update_ui(self):
-
-        now = datetime.now()
-
-        self.update_label.setText(
-            f"Last Update : {now.strftime('%H:%M:%S')}"
-        )
-
-        self.date_label.setText(
-            f"Date : {now.strftime('%d-%m-%Y')}"
-        )
 
         try:
 
-            fs, fe, rs, re = processlog(
-                self.log_dir
+            result = process_data(config.log_dir)
+
+            fs, fe, rs, re, fs_avg, fe_avg, rs_avg, re_avg, ut, dt = result
+
+            axs = self.canvas.axs
+
+            for ax in axs.flat:
+
+                ax.clear()
+
+            temp_graph(axs[0][0], fs, "Front DL Start")
+            temp_graph(axs[0][1], rs, "Rear Start")
+
+            temp_graph(axs[1][0], fe, "Front End")
+            temp_graph(axs[1][1], re, "Rear End")
+
+            self.canvas.draw()
+
+            self.fs_avg.setText(
+                f"Front Start Avg: {round(fs_avg,2)}°C"
             )
 
-        except Exception as e:
+            self.fe_avg.setText(
+                f"Front End Avg: {round(fe_avg,2)}°C"
+            )
 
-            print("LOG ERROR :", e)
+            self.rs_avg.setText(
+                f"Rear Start Avg: {round(rs_avg,2)}°C"
+            )
 
-            return
+            self.re_avg.setText(
+                f"Rear End Avg: {round(re_avg,2)}°C"
+            )
 
-        axs = self.canvas.axs
+            self.ut.setText(f"Update Time: {ut}")
+            self.dt.setText(f"Data Time: {dt}")
 
-        for ax in axs.flat:
-            ax.clear()
-
-        colors = [
-            '#22D3EE',
-            '#4ADE80',
-            '#FACC15',
-            '#F87171'
-        ]
-
-        temp_graph(
-            axs[0][0],
-            fs,
-            "Front Start",
-            colors,
-            "#1E293B"
-        )
-
-        temp_graph(
-            axs[0][1],
-            rs,
-            "Rear Start",
-            colors,
-            "#172554"
-        )
-
-        temp_graph(
-            axs[1][0],
-            fe,
-            "Front End",
-            colors,
-            "#1E293B"
-        )
-
-        temp_graph(
-            axs[1][1],
-            re,
-            "Rear End",
-            colors,
-            "#172554"
-        )
-
-        self.canvas.draw()
-
-        # ─────────────────────────────
-        # AVERAGES
-        # ─────────────────────────────
-        fs_avg = sum(
-            [arr[-1] for arr in fs if arr]
-        ) / max(1, len(fs))
-
-        fe_avg = sum(
-            [arr[-1] for arr in fe if arr]
-        ) / max(1, len(fe))
-
-        rs_avg = sum(
-            [arr[-1] for arr in rs if arr]
-        ) / max(1, len(rs))
-
-        re_avg = sum(
-            [arr[-1] for arr in re if arr]
-        ) / max(1, len(re))
-
-        self.fs_avg.setText(
-            f"{round(fs_avg, 2)} °C"
-        )
-
-        self.fe_avg.setText(
-            f"{round(fe_avg, 2)} °C"
-        )
-
-        self.rs_avg.setText(
-            f"{round(rs_avg, 2)} °C"
-        )
-
-        self.re_avg.setText(
-            f"{round(re_avg, 2)} °C"
-        )
-
-        # ─────────────────────────────
-        # STATUS
-        # ─────────────────────────────
-        if max(
-            fs_avg,
-            fe_avg,
-            rs_avg,
-            re_avg
-        ) > 50:
-
-            self.status.setText("● HIGH TEMP")
-
-            if not self.blink_timer.isActive():
-
-                self.blink_timer.start(500)
-
-        else:
-
+            # FIXED STATUS ISSUE
             self.status.setText("● RUNNING")
 
             self.status.setStyleSheet("""
                 color:#22C55E;
-                font-size:30px;
+                font-size:28px;
                 font-weight:bold;
             """)
 
-            self.blink_timer.stop()
+        except Exception as e:
+
+            print("ERROR:", e)
+
+            self.status.setText("● ERROR")
+
+            self.status.setStyleSheet("""
+                color:red;
+                font-size:28px;
+                font-weight:bold;
+            """)
 
 
-# ─────────────────────────────
+# =========================================================
 # MAIN
-# ─────────────────────────────
+# =========================================================
+
 if __name__ == "__main__":
 
     app = QApplication(sys.argv)
