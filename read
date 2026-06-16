@@ -1,0 +1,683 @@
+For the SMC ITV2050-RC2L (RS-232C version), the communication interface is fairly simple: ASCII commands over RS-232. The official communication settings are: 9600 bps, 8 data bits, no parity, 1 stop bit (8N1), no flow control, with commands terminated by CR + LF. 
+
+RS-232 Connector Pinout
+
+The RS-232 communication connector uses these signals: 
+
+Pin	Signal
+
+2	TXD (from ITV)
+3	RXD (to ITV)
+4	GND
+1,5	Not connected
+
+
+Typical PC Wiring
+
+PC DB9	ITV2050-RC2L
+
+Pin 2 (RXD)	TXD
+Pin 3 (TXD)	RXD
+Pin 5 (GND)	GND
+
+
+A USB-RS232 converter can be used if your PC lacks a COM port.
+
+Communication Parameters
+
+Parameter	Value
+
+Baud Rate	9600
+Data Bits	8
+Parity	None
+Stop Bits	1
+Flow Control	None
+Command Terminator	CR + LF
+Character Set	ASCII
+
+
+Pressure Setting Command
+
+The RS-232 ITV series uses ASCII commands to write a pressure setpoint and read back pressure. The exact command syntax varies slightly by firmware revision, and SMC publishes it in the RS-232C Operation Manual (ITV2-OM00082 / RS-232C-E). 
+
+Typical operation:
+
+1. Send a pressure setpoint value.
+
+
+2. ITV adjusts output pressure.
+
+
+3. Read actual pressure value.
+
+
+4. Monitor status/error codes.
+
+
+
+Example Serial Port Setup (Python)
+
+import serial
+
+ser = serial.Serial(
+    port='COM3',
+    baudrate=9600,
+    bytesize=8,
+    parity='N',
+    stopbits=1,
+    timeout=1
+)
+
+# Example command
+ser.write(b'xxxx\r\n')
+response = ser.readline()
+print(response)
+
+Important Note
+
+The publicly indexed manuals describe the protocol settings but do not include the full command table. The complete command list (pressure write, pressure read, status read, checksum format, etc.) is contained in the SMC RS-232C operation manual for ITV communication models. 
+
+If you need the exact command strings, I can help locate and decode the full RS-232C manual, or if you have a photo/PDF of the manual page, I can extract all commands and provide PLC examples (Mitsubishi, Siemens, Omron, Delta, Arduino, Python, etc.).
+The ITV2050-RC2L is a pressure regulator, not a flow controller. Over RS-232 you can only command the pressure setpoint. Flow is controlled indirectly by changing the pressure. 
+
+Main RS-232 Commands
+
+Command	Function
+
+SET nnn	Set pressure demand (0–1023)
+REQ	Read current setpoint
+MON	Read actual pressure
+INC	Increase setpoint by 2 counts
+DEC	Decrease setpoint by 2 counts
+
+
+Example: To set 50% of full-scale pressure:
+
+SET 512<CR><LF>
+
+For your ITV2050 (0–0.9 MPa range), 512 corresponds to approximately:
+
+0.9 × 512 / 1023 ≈ 0.45 MPa
+
+
+
+Reading Back Pressure
+
+MON<CR><LF>
+
+Example response:
+
+487
+
+Actual pressure:
+
+Pressure = 487 / 1023 × 0.9 MPa
+         ≈ 0.428 MPa
+
+
+
+If You Need Constant Flow
+
+The ITV cannot accept commands such as:
+
+FLOW 100
+SETFLOW 50 LPM
+
+Those commands do not exist. The device only regulates pressure. 
+
+For closed-loop flow control you would typically use:
+
+Flow Meter → PLC/PC → ITV2050
+
+The PLC reads actual flow and continuously adjusts the ITV pressure using SET nnn until the desired flow is reached.
+
+For example, if you are controlling vacuum suction through a 125 mm hose (similar to your earlier vacuum project), the logic would be:
+
+1. Read airflow from flow sensor.
+
+
+2. Compare with target flow (e.g., 500 m³/h).
+
+
+3. Increase/decrease ITV pressure via SET nnn.
+
+
+4. Repeat every 100–500 ms.
+
+
+
+If you tell me:
+
+What device the ITV is controlling (cylinder, vacuum blower, air knife, etc.)
+
+Desired flow range (L/min, m³/h, CFM)
+
+
+I can help derive the exact SET values or a PLC PID loop for flow control.
+
+If your goal is to verify RS-232 communication, pressure regulation performance, and closed-loop flow control using the ITV2050-RC2L, the following test setup is practical and representative of a real application.
+
+Test Setup Diagram
+
+Compressed Air Supply
+        │
+   Filter/Regulator
+        │
+        ▼
+   ITV2050-RC2L
+        │
+        ├──────── Pressure Gauge
+        │
+        ▼
+   Control Valve
+        │
+        ▼
+     Flow Meter
+        │
+        ▼
+   Adjustable Load
+ (orifice/air knife/
+  vacuum generator)
+        │
+      Exhaust
+
+PC / PLC
+    │
+ RS-232
+    │
+ ITV2050-RC2L
+
+
+---
+
+Required Components
+
+Pneumatic Components
+
+Item	Purpose
+
+Compressed air supply (0.6–1.0 MPa)	Source air
+Air filter (5 µm)	Protect ITV
+Manual shutoff valve	Safety isolation
+ITV2050-RC2L	Pressure regulation
+Precision pressure gauge	Verify pressure
+Flow meter	Measure actual flow
+Needle valve/orifice plate	Create variable load
+Tubing and fittings	Pneumatic connections
+Exhaust silencer	Noise reduction
+
+
+Electrical Components
+
+Item	Purpose
+
+24 VDC power supply	ITV power
+RS-232 cable	Communication
+USB-to-RS232 converter	PC connection
+PLC or industrial PC (optional)	Closed-loop control
+Emergency stop switch	Safety
+
+
+Instrumentation
+
+Instrument	Purpose
+
+Digital pressure gauge	Reference pressure
+Flow sensor	Flow feedback
+Multimeter	Electrical verification
+Data logging software	Record results
+
+
+
+---
+
+Test 1 – Basic Communication
+
+Verify RS-232 operation.
+
+1. Apply 24 VDC.
+
+
+2. Connect RS-232.
+
+
+3. Send:
+
+
+
+REQ
+
+Expected:
+
+0
+
+or current setpoint.
+
+4. Send:
+
+
+
+SET 512
+
+5. Read back:
+
+
+
+REQ
+
+Expected:
+
+512
+
+
+---
+
+Test 2 – Pressure Accuracy
+
+Verify pressure tracking.
+
+Procedure
+
+Command	Expected Pressure
+
+SET 0	0 MPa
+SET 256	~0.225 MPa
+SET 512	~0.450 MPa
+SET 768	~0.675 MPa
+SET 1023	~0.900 MPa
+
+
+Record:
+
+Setpoint
+MON value
+Gauge pressure
+Error
+
+Acceptance criterion:
+
+Error < ±1% FS
+
+(or according to your specification)
+
+
+---
+
+Test 3 – Dynamic Response
+
+Measure regulator speed.
+
+1. Start at:
+
+
+
+SET 100
+
+2. Command:
+
+
+
+SET 900
+
+3. Record pressure vs time.
+
+
+
+Measure:
+
+Rise time
+
+Settling time
+
+Overshoot
+
+
+Typical target:
+
+< 1 second settling
+
+depending on volume and load.
+
+
+---
+
+Test 4 – Flow Characterization
+
+Since ITV controls pressure rather than flow:
+
+1. Install flow meter.
+
+
+2. Set fixed load.
+
+
+3. Sweep pressure:
+
+
+
+SET 100
+SET 200
+SET 300
+...
+SET 1000
+
+Record:
+
+Setpoint	Pressure	Flow
+
+100	x	y
+200	x	y
+300	x	y
+
+
+This creates a pressure-to-flow calibration curve.
+
+
+---
+
+Test 5 – Closed-Loop Flow Control
+
+Hardware
+
+Flow Sensor → PLC/PC → RS232 → ITV2050
+
+Control Logic
+
+Target Flow = 500 m³/h
+
+Loop:
+    Read Flow
+    Error = Target - Actual
+
+    PID Output
+
+    SET nnn
+
+Repeat every 200 ms
+
+Example
+
+Target = 500 m³/h
+Actual = 450 m³/h
+
+Error = +50
+
+Increase pressure:
+
+SET 600
+
+If flow becomes:
+
+520 m³/h
+
+reduce pressure:
+
+SET 580
+
+
+---
+
+Recommended Test Equipment
+
+For a professional setup:
+
+Flow sensor with 4–20 mA or Modbus output
+
+Precision digital pressure gauge (0.25% accuracy)
+
+Industrial PC running Python or LabVIEW
+
+USB-RS232 converter based on FTDI chipset
+
+24 VDC, 2 A regulated power supply
+
+Pneumatic manifold with isolation valves
+
+
+This setup allows complete validation of:
+
+RS-232 communication
+
+Pressure accuracy
+
+Dynamic response
+
+Pressure-to-flow mapping
+
+Closed-loop flow control performance using the ITV2050-RC2L.
+
+Below is a simple Python example using pySerial to communicate with the ITV2050-RC2L over RS-232. It includes functions to:
+
+Set pressure (SET nnn)
+
+Read setpoint (REQ)
+
+Read actual pressure (MON)
+
+Convert counts to MPa
+
+Perform a basic pressure sweep test
+
+
+Install pySerial
+
+pip install pyserial
+
+ITV2050 Communication Class
+
+import serial
+import time
+
+
+class ITV2050:
+    FULL_SCALE_MPA = 0.9
+
+    def __init__(self, port, baudrate=9600, timeout=1):
+        self.ser = serial.Serial(
+            port=port,
+            baudrate=baudrate,
+            bytesize=serial.EIGHTBITS,
+            parity=serial.PARITY_NONE,
+            stopbits=serial.STOPBITS_ONE,
+            timeout=timeout
+        )
+
+    def send_command(self, cmd):
+        command = f"{cmd}\r\n"
+        self.ser.write(command.encode())
+
+        response = self.ser.readline().decode().strip()
+        return response
+
+    def set_pressure(self, counts):
+        counts = max(0, min(1023, counts))
+        self.send_command(f"SET {counts}")
+
+    def read_setpoint(self):
+        response = self.send_command("REQ")
+        return int(response)
+
+    def read_pressure_counts(self):
+        response = self.send_command("MON")
+        return int(response)
+
+    def read_pressure_mpa(self):
+        counts = self.read_pressure_counts()
+        return counts / 1023.0 * self.FULL_SCALE_MPA
+
+    def close(self):
+        self.ser.close()
+
+
+---
+
+Example 1: Set 0.45 MPa
+
+from time import sleep
+
+itv = ITV2050("COM3")
+
+itv.set_pressure(512)
+
+sleep(1)
+
+pressure = itv.read_pressure_mpa()
+
+print(f"Actual Pressure = {pressure:.3f} MPa")
+
+itv.close()
+
+Expected:
+
+Actual Pressure ≈ 0.45 MPa
+
+
+---
+
+Example 2: Read Actual Pressure Continuously
+
+import time
+
+itv = ITV2050("COM3")
+
+try:
+    while True:
+        pressure = itv.read_pressure_mpa()
+        print(f"{pressure:.3f} MPa")
+        time.sleep(0.5)
+
+except KeyboardInterrupt:
+    pass
+
+finally:
+    itv.close()
+
+
+---
+
+Example 3: Pressure Sweep Test
+
+Useful for generating a pressure-flow calibration table.
+
+import time
+
+itv = ITV2050("COM3")
+
+try:
+    for sp in range(0, 1024, 100):
+
+        print(f"Setting {sp}")
+
+        itv.set_pressure(sp)
+
+        time.sleep(2)
+
+        actual = itv.read_pressure_mpa()
+
+        print(
+            f"Setpoint={sp:4d}  "
+            f"Pressure={actual:.3f} MPa"
+        )
+
+finally:
+    itv.close()
+
+
+---
+
+Example 4: Simple Closed-Loop Flow Control
+
+Assume:
+
+Flow sensor returns flow in m³/h.
+
+ITV controls pressure.
+
+Desired flow = 500 m³/h.
+
+
+import time
+
+TARGET_FLOW = 500.0
+
+setpoint = 500
+
+itv = ITV2050("COM3")
+
+
+def read_flow():
+    """
+    Replace with your actual flow sensor code.
+    """
+    return 450.0
+
+
+try:
+    while True:
+
+        flow = read_flow()
+
+        error = TARGET_FLOW - flow
+
+        gain = 0.5
+
+        setpoint += int(gain * error)
+
+        setpoint = max(0, min(1023, setpoint))
+
+        itv.set_pressure(setpoint)
+
+        print(
+            f"Flow={flow:.1f} m3/h "
+            f"Error={error:.1f} "
+            f"SET={setpoint}"
+        )
+
+        time.sleep(0.2)
+
+finally:
+    itv.close()
+
+
+---
+
+Example 5: PID Control (Recommended)
+
+For stable flow control, use a PID controller:
+
+pip install simple-pid
+
+from simple_pid import PID
+import time
+
+pid = PID(
+    Kp=1.0,
+    Ki=0.2,
+    Kd=0.05,
+    setpoint=500
+)
+
+pid.output_limits = (0, 1023)
+
+itv = ITV2050("COM3")
+
+try:
+    while True:
+
+        flow = read_flow()
+
+        output = pid(flow)
+
+        itv.set_pressure(int(output))
+
+        print(
+            f"Flow={flow:.1f} "
+            f"PID={output:.1f}"
+        )
+
+        time.sleep(0.2)
+
+finally:
+    itv.close()
+
+If you tell me the flow meter model and whether you're using Windows PC, Raspberry Pi, Siemens PLC, Beckhoff, or LabVIEW, I can provide a complete production-ready test application with data logging and automatic pressure-flow calibration.
