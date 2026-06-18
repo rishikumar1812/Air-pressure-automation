@@ -1,0 +1,158 @@
+import sys
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QLabel, QPushButton,
+    QVBoxLayout, QHBoxLayout, QLineEdit, QMessageBox
+)
+from PyQt5.QtCore import QTimer
+import serial
+
+
+class ITV2050:
+    FULL_SCALE_MPA = 0.9
+
+    def __init__(self, port, baudrate=9600, timeout=1):
+        self.ser = serial.Serial(
+            port=port,
+            baudrate=baudrate,
+            timeout=timeout
+        )
+
+    def send_command(self, cmd):
+        self.ser.reset_input_buffer()
+        self.ser.write(f"{cmd}\r\n".encode())
+        return self.ser.readline().decode().strip()
+
+    def set_pressure(self, counts):
+        counts = max(0, min(1023, counts))
+        self.send_command(f"SET {counts}")
+
+    def read_pressure_counts(self):
+        return int(self.send_command("MON"))
+
+    def read_pressure_mpa(self):
+        counts = self.read_pressure_counts()
+        return counts / 1023 * self.FULL_SCALE_MPA
+
+    def close(self):
+        if self.ser.is_open:
+            self.ser.close()
+
+
+class Dashboard(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        self.itv = None
+
+        self.setWindowTitle("ITV2050 Pressure Controller")
+        self.resize(400, 250)
+
+        layout = QVBoxLayout()
+
+        # COM Port
+        com_layout = QHBoxLayout()
+        self.com_edit = QLineEdit("COM3")
+        self.connect_btn = QPushButton("Connect")
+
+        com_layout.addWidget(QLabel("COM Port"))
+        com_layout.addWidget(self.com_edit)
+        com_layout.addWidget(self.connect_btn)
+
+        # Pressure Input
+        pressure_layout = QHBoxLayout()
+        self.pressure_edit = QLineEdit("512")
+        self.set_btn = QPushButton("Set Pressure")
+
+        pressure_layout.addWidget(QLabel("Setpoint"))
+        pressure_layout.addWidget(self.pressure_edit)
+        pressure_layout.addWidget(self.set_btn)
+
+        # Display
+        self.pressure_label = QLabel("Pressure: --- MPa")
+        self.pressure_label.setStyleSheet(
+            "font-size:20px;font-weight:bold;"
+        )
+
+        # Monitor Buttons
+        monitor_layout = QHBoxLayout()
+        self.start_btn = QPushButton("Start Monitor")
+        self.stop_btn = QPushButton("Stop Monitor")
+
+        monitor_layout.addWidget(self.start_btn)
+        monitor_layout.addWidget(self.stop_btn)
+
+        layout.addLayout(com_layout)
+        layout.addLayout(pressure_layout)
+        layout.addWidget(self.pressure_label)
+        layout.addLayout(monitor_layout)
+
+        self.setLayout(layout)
+
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_pressure)
+
+        self.connect_btn.clicked.connect(self.connect_device)
+        self.set_btn.clicked.connect(self.set_pressure)
+        self.start_btn.clicked.connect(
+            lambda: self.timer.start(1000)
+        )
+        self.stop_btn.clicked.connect(
+            lambda: self.timer.stop()
+        )
+
+    def connect_device(self):
+        try:
+            self.itv = ITV2050(self.com_edit.text())
+            QMessageBox.information(
+                self,
+                "Success",
+                "Connected Successfully"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Connection Error",
+                str(e)
+            )
+
+    def set_pressure(self):
+        if not self.itv:
+            return
+
+        try:
+            value = int(self.pressure_edit.text())
+            self.itv.set_pressure(value)
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Error",
+                str(e)
+            )
+
+    def update_pressure(self):
+        if not self.itv:
+            return
+
+        try:
+            pressure = self.itv.read_pressure_mpa()
+            self.pressure_label.setText(
+                f"Pressure: {pressure:.3f} MPa"
+            )
+        except Exception as e:
+            self.pressure_label.setText(
+                f"Error: {str(e)}"
+            )
+
+    def closeEvent(self, event):
+        if self.itv:
+            self.itv.close()
+        event.accept()
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+
+    window = Dashboard()
+    window.show()
+
+    sys.exit(app.exec_())
