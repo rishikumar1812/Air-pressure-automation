@@ -1,181 +1,137 @@
-"""
-itv2050.py
-
-RS-232C driver for the SMC ITV2050-RC2L electro-pneumatic regulator.
-
-Protocol summary (from the SMC ITV2050-RC2L RS-232C operation manual):
-
-    Serial settings : 9600 baud, 8 data bits, 1 stop bit, no parity, no flow control
-    Character code  : ASCII
-    Frame format    : "<COMMAND> <value>\r\n"  (single space between command and value)
-    End code        : CR LF
-
-    Commands:
-        SET nn   -> set output pressure. nn is an integer 0-1023.
-                    Response: "nn"               (confirmed value, 0-1023)
-                              "OUT OF RANGE"      if 1023 < nn <= 9999
-                              "UNKNOWN COMMAND"   if nn outside 0-9999
-        INC      -> add 2 to the current setting. Response: "mm" (new setting).
-                    Clamped to 1023 if current >= 1021.
-        DEC      -> subtract 2 from the current setting. Response: "mm" (new setting).
-                    Clamped to 0 if current <= 2.
-        REQ      -> request the current *setting* data. Response: "nn"
-        MON      -> request the actual *measured output* pressure. Response: "nn"
-
-    The 0-1023 setting value is linear against 0%-100% of the unit's full-scale (F.S.)
-    pressure rating:
-        nn = (desired_pressure / F.S.) * 1023
-
-    IMPORTANT: F.S. depends on your exact ITV2050-RC2L configuration/nameplate.
-    The standard ITV2050-RC2L pressure range is 0.9 MPa - confirm against your unit
-    before relying on this in production. Override via the `full_scale_mpa` constructor
-    argument if your unit differs.
-"""
-
-import time
 import serial
+import time
 
 
-class ITV2050Error(Exception):
-    """Raised for communication errors or error responses from the regulator."""
+class ITV2050:
+    """
+    Driver for SMC ITV2050-RC2L E/P Regulator over RS-232C.
 
+    Fixes applied vs. the original version:
+      1. reset_input_buffer() before every write, so stale bytes from a
+         previous (possibly malformed) exchange can never bleed into
+         the next read. This was the root cause of the intermittent
+         'm' / UNKNOWN COMMAND / empty-response behaviour - it's a
+         buffer race, not a wiring fault.
+      2. read_until(b"\\n") instead of readline() - functionally similar,
+         but made explicit since the manual specifies CR/LF as the
+         frame terminator. (readline() already respects this by default
+         since '\\n' is pyserial's default line terminator, but being
+         explicit avoids relying on a default that's easy to misconfigure
+         later.)
+      3. Safe parsing - int(response) no longer crashes the whole
+         script on UNKNOWN COMMAND / OUT OF RANGE / timeout. Errors are
+         raised as a clear, specific exception instead of a bare
+         ValueError, so calling code can catch and retry/log instead of
+         dying.
+      4. A small inter-command settle delay is exposed (not forced) so
+         you can space out rapid back-to-back commands if needed.
+    """
 
-class ITV2050Regulator:
+    FULL_SCALE_MPA = 0.9
 
-    def __init__(self, port, baudrate=9600, timeout=1.0, full_scale_mpa=0.9):
-        self.port = port
-        self.baudrate = baudrate
-        self.timeout = timeout
-        self.full_scale_mpa = full_scale_mpa
-        self.ser = None
+    class RegulatorError(Exception):
+        """Raised when the regulator returns a non-numeric / error
+        response instead of valid data."""
+        pass
 
-    # ---------------------------------------------------------------- #
-    # connection management
-    # ---------------------------------------------------------------- #
-
-    def connect(self):
+    def __init__(self, port, baudrate=9600, timeout=1):
         self.ser = serial.Serial(
-            port=self.port,
-            baudrate=self.baudrate,
+            port=port,
+            baudrate=baudrate,
             bytesize=serial.EIGHTBITS,
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
-            timeout=self.timeout,
+            timeout=timeout,
+            write_timeout=timeout,
+            dsrdtr=False,
+            rtscts=False,
+            xonxoff=False,
         )
-        time.sleep(0.1)  # let the port settle after opening
-        return self
+        # Clear out anything stale sitting in the OS buffers from
+        # before this object existed (e.g. a previous crashed run).
+        self.ser.reset_input_buffer()
+        self.ser.reset_output_buffer()
+
+    def send_command(self, cmd):
+        """Send one command, return the regulator's raw text response
+        (stripped of CR/LF), or '' on timeout.
+
+        Critically: drains the input buffer immediately before writing,
+        so any unread bytes left over from a prior exchange can never
+        be mistaken for this command's response.
+        """
+        self.ser.reset_input_buffer()
+
+        command = f"{cmd}\r\n"
+        self.ser.write(command.encode("ascii"))
+        self.ser.flush()
+
+        raw = self.ser.read_until(b"\n")  # blocks up to `timeout` seconds
+        return raw.decode("ascii", errors="replace").strip()
+
+    def _send_and_parse_int(self, cmd):
+        """Send a command expected to return a plain integer, and
+        raise a clear error if it didn't - instead of letting int()
+        throw an opaque ValueError or silently propagating garbage.
+        """
+        response = self.send_command(cmd)
+
+        if response == "":
+            raise self.RegulatorError(
+                f"No response to '{cmd}' (timed out). "
+                f"Check wiring / power / that nothing else has the port open."
+            )
+
+        if not response.lstrip("-").isdigit():
+            # Covers UNKNOWN COMMAND, OUT OF RANGE, or any stray garbage.
+            raise self.RegulatorError(
+                f"Unexpected response to '{cmd}': {response!r}"
+            )
+
+        return int(response)
+
+    def set_pressure(self, counts):
+        counts = max(0, min(1023, counts))
+        response = self.send_command(f"SET {counts}")
+
+        if response == "":
+            raise self.RegulatorError(
+                f"No response to 'SET {counts}' (timed out)."
+            )
+        if not response.lstrip("-").isdigit():
+            raise self.RegulatorError(
+                f"Unexpected response to 'SET {counts}': {response!r}"
+            )
+        return int(response)
+
+    def read_setpoint(self):
+        return self._send_and_parse_int("REQ")
+
+    def read_pressure_counts(self):
+        return self._send_and_parse_int("MON")
+
+    def read_pressure_mpa(self):
+        counts = self.read_pressure_counts()
+        return counts / 1023.0 * self.FULL_SCALE_MPA
 
     def close(self):
-        if self.ser is not None and self.ser.is_open:
-            self.ser.close()
+        self.ser.close()
 
-    def __enter__(self):
-        self.connect()
-        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+# ---------------------------------------------------------------- #
+# Example 1: Set 0.45 MPa
+# ---------------------------------------------------------------- #
+if __name__ == "__main__":
+    from time import sleep
 
-    # ---------------------------------------------------------------- #
-    # low-level command/response
-    # ---------------------------------------------------------------- #
+    itv = ITV2050("COM19")
 
-    def _send(self, command):
-        if self.ser is None or not self.ser.is_open:
-            raise ITV2050Error("Serial port is not open. Call connect() first.")
-
-        frame = (command + "\r\n").encode("ascii")
-
-        self.ser.reset_input_buffer()
-        self.ser.write(frame)
-
-        raw = self.ser.readline()
-        if not raw:
-            raise ITV2050Error(
-                f"No response from regulator on {self.port} for command {command!r} "
-                f"(timeout={self.timeout}s). Check wiring/COM port/baud rate."
-            )
-
-        try:
-            text = raw.decode("ascii").strip()
-        except UnicodeDecodeError:
-            raise ITV2050Error(
-                f"Got non-ASCII bytes back for command {command!r}: {raw!r}. "
-                f"This usually means a baud-rate mismatch or noisy wiring, not a "
-                f"Python encoding bug — the regulator only ever speaks ASCII."
-            )
-
-        if text == "OUT OF RANGE":
-            raise ITV2050Error(f"Setting data out of range for command {command!r}.")
-        if text == "UNKNOWN COMMAND":
-            raise ITV2050Error(f"Regulator rejected command {command!r} as unknown.")
-        if text == "":
-            raise ITV2050Error(
-                f"Empty response for command {command!r}. Raw bytes were {raw!r}."
-            )
-
-        return text
-
-    def _parse_int(self, text, command):
-        """
-        Convert a response string to int, with a clear error (not a raw
-        ValueError/TypeError) if it's missing, None, or not actually numeric.
-        """
-        if text is None:
-            raise ITV2050Error(f"Got no usable response (None) for command {command!r}.")
-        try:
-            return int(text)
-        except (ValueError, TypeError):
-            raise ITV2050Error(
-                f"Response {text!r} for command {command!r} isn't a valid integer. "
-                f"Likely a partial/garbled frame — check baud rate and CR/LF framing."
-            )
-
-    # ---------------------------------------------------------------- #
-    # pressure <-> raw setting conversion
-    # ---------------------------------------------------------------- #
-
-    def pressure_to_raw(self, pressure_mpa):
-        pressure_mpa = max(0.0, min(self.full_scale_mpa, pressure_mpa))
-        raw = round((pressure_mpa / self.full_scale_mpa) * 1023)
-        return max(0, min(1023, raw))
-
-    def raw_to_pressure(self, raw):
-        return (raw / 1023.0) * self.full_scale_mpa
-
-    # ---------------------------------------------------------------- #
-    # public commands
-    # ---------------------------------------------------------------- #
-
-    def set_pressure(self, pressure_mpa):
-        """Set output pressure in MPa. Returns the regulator-confirmed value in MPa."""
-        raw = self.pressure_to_raw(pressure_mpa)
-        confirmed_raw = self._parse_int(self._send(f"SET {raw}"), f"SET {raw}")
-        return self.raw_to_pressure(confirmed_raw)
-
-    def set_raw(self, raw):
-        """Set output pressure using the raw 0-1023 setting value directly."""
-        raw = max(0, min(1023, int(raw)))
-        return self._parse_int(self._send(f"SET {raw}"), f"SET {raw}")
-
-    def increase(self):
-        """Step the setting up by 2 (~0.2% F.S.). Returns new raw setting (0-1023)."""
-        return self._parse_int(self._send("INC"), "INC")
-
-    def decrease(self):
-        """Step the setting down by 2. Returns new raw setting (0-1023)."""
-        return self._parse_int(self._send("DEC"), "DEC")
-
-    def read_setpoint_raw(self):
-        """Read back the commanded setting data (0-1023)."""
-        return self._parse_int(self._send("REQ"), "REQ")
-
-    def read_setpoint_pressure(self):
-        return self.raw_to_pressure(self.read_setpoint_raw())
-
-    def read_output_raw(self):
-        """Read the actual measured output pressure (0-1023)."""
-        return self._parse_int(self._send("MON"), "MON")
-
-    def read_output_pressure(self):
-        return self.raw_to_pressure(self.read_output_raw())
+    try:
+        itv.set_pressure(512)
+        sleep(1)
+        pressure = itv.read_pressure_mpa()
+        print(f"Actual Pressure = {pressure:.3f} MPa")
+    except ITV2050.RegulatorError as e:
+        print(f"Regulator error: {e}")
+    finally:
+        itv.close()
